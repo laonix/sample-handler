@@ -7,22 +7,33 @@ import (
 	"time"
 )
 
+// Stat is a contract for handling requests rate statistics.
 type Stat interface {
+	// Reset performs statistics flushing.
+	//
+	// Reset is supposed to be called after each agreed time interval.
 	Reset()
+
+	// Increment increases a counter of requests from a given IP by 1.
+	//
+	// This operation collects statistics for each IP to decide if a rate limit is exceeded.
 	Increment(id string) int32
 }
 
+// StatHolder is a default implementation of Stat.
 type StatHolder struct {
 	mu      sync.RWMutex
 	counter map[string]int32
 }
 
+// NewStatHolder returns a new instance of StatHolder.
 func NewStatHolder() *StatHolder {
 	return &StatHolder{
 		counter: make(map[string]int32),
 	}
 }
 
+// Reset clears underlying counter map.
 func (sh *StatHolder) Reset() {
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
@@ -30,6 +41,7 @@ func (sh *StatHolder) Reset() {
 	sh.counter = make(map[string]int32)
 }
 
+// Increment adds 1 to a counter of requests incoming from a given IP.
 func (sh *StatHolder) Increment(id string) int32 {
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
@@ -39,7 +51,11 @@ func (sh *StatHolder) Increment(id string) int32 {
 	return sh.counter[id]
 }
 
+// RateLimit creates a middleware wrapping a given handler.
+// It allows to set a rate limit for requests from each IP at a certain time window.
 func RateLimit(limit int, window time.Duration, stat Stat) func(next http.Handler) http.Handler {
+	// I'd rather use Limiter from golang.org/x/time/rate package,
+	// but here we go
 	ticker := time.NewTicker(window)
 	go func() {
 		for range ticker.C {

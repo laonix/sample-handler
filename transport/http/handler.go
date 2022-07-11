@@ -19,11 +19,14 @@ const (
 	defaultLimitDuration = time.Second
 )
 
+// resSizes holds a slice of byte lengths of responses bodies.
 type resSizes struct {
 	mu sync.Mutex
 	s  []int
 }
 
+// String returns a string representation of resSizes:
+// strings with responses bodies lengths in bytes separated by a new line.
 func (rs *resSizes) String() string {
 	b := strings.Builder{}
 
@@ -38,6 +41,7 @@ func (rs *resSizes) String() string {
 	return b.String()
 }
 
+// Add appends a byte length of response body to resSizes.
 func (rs *resSizes) Add(i int) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
@@ -45,10 +49,14 @@ func (rs *resSizes) Add(i int) {
 	rs.s = append(rs.s, i)
 }
 
+// Getter is a contract for performing HTTP GET requests.
+//
+// Standart http.Client satisfies Getter interface.
 type Getter interface {
 	Get(url string) (resp *http.Response, err error)
 }
 
+// ResponseSizeCounter is an implementation of http.Handler.
 type ResponseSizeCounter struct {
 	urls  []string
 	sizes resSizes
@@ -56,6 +64,7 @@ type ResponseSizeCounter struct {
 	client Getter
 }
 
+// MakeResponseSizeCounter returns a new instance of ResponseSizeCounter wrapped in RateLimit middleware.
 func MakeResponseSizeCounter() http.Handler {
 	rateLimitMW := RateLimit(defaultRateLimit, defaultLimitDuration, NewStatHolder())
 	rsc := &ResponseSizeCounter{
@@ -65,6 +74,9 @@ func MakeResponseSizeCounter() http.Handler {
 	return rateLimitMW(rsc)
 }
 
+// ServeHTTP receives a POST request with urls separated by a new line,
+// performs GET requests to each of that urls and returns within its response
+// a string of new-line separated byte lengths of performed requests responses.
 func (h *ResponseSizeCounter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// I'd rather use github.com/gorilla/handlers and github.com/gorilla/mux
 	// to manage middleware and methods to handlers mapping,
