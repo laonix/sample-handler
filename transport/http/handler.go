@@ -11,13 +11,26 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 )
 
 const (
-	defaultRateLimit     = 999
-	defaultLimitDuration = time.Second
+	maxConnectionsNumber = 999
 )
+
+// Getter is a contract for performing HTTP GET requests.
+//
+// Standart http.Client satisfies Getter interface.
+type Getter interface {
+	Get(url string) (resp *http.Response, err error)
+}
+
+// ResponseSizeCounter is an implementation of http.Handler.
+type ResponseSizeCounter struct {
+	urls  []string
+	sizes resSizes
+
+	client Getter
+}
 
 // resSizes holds a slice of byte lengths of responses bodies.
 type resSizes struct {
@@ -49,45 +62,28 @@ func (rs *resSizes) Add(i int) {
 	rs.s = append(rs.s, i)
 }
 
-// Getter is a contract for performing HTTP GET requests.
-//
-// Standart http.Client satisfies Getter interface.
-type Getter interface {
-	Get(url string) (resp *http.Response, err error)
-}
-
-// ResponseSizeCounter is an implementation of http.Handler.
-type ResponseSizeCounter struct {
-	urls  []string
-	sizes resSizes
-
-	client Getter
-}
-
-// MakeResponseSizeCounter returns a new instance of ResponseSizeCounter wrapped in RateLimit middleware.
-func MakeResponseSizeCounter() http.Handler {
-	rateLimitMW := RateLimit(defaultRateLimit, defaultLimitDuration, NewStatHolder())
-	rsc := &ResponseSizeCounter{
-		client: http.DefaultClient,
-		sizes:  resSizes{},
-	}
-	return rateLimitMW(rsc)
-}
+var connections = make(chan struct{}, maxConnectionsNumber)
 
 // ServeHTTP receives a POST request with urls separated by a new line,
 // performs GET requests to each of that urls and returns within its response
 // a string of new-line separated byte lengths of performed requests responses.
 func (h *ResponseSizeCounter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	// I'd rather use github.com/gorilla/handlers and github.com/gorilla/mux
-	// to manage middleware and methods to handlers mapping,
-	// but here we go
+	// limit concurrent connections number
+	connections <- struct{}{}
+	defer func() {
+		<-connections
+	}()
+
+	// do serve
 	if req.Method == http.MethodPost {
 		h.serve(w, req)
 	} else {
+		w.Header().Set("Allow", "POST")
 		http.Error(w, "Only POST method supported.", http.StatusMethodNotAllowed)
 		return
 	}
 }
+
 func (h *ResponseSizeCounter) serve(w http.ResponseWriter, req *http.Request) {
 	if err := h.getUrls(req); err != nil {
 		http.Error(w, fmt.Errorf("get urls: %s", err).Error(), http.StatusInternalServerError)
